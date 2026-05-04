@@ -1,4 +1,3 @@
-
 <div align="center">
 
 # FinRL-X
@@ -21,7 +20,7 @@
 ![](https://img.shields.io/github/issues-pr-raw/AI4Finance-Foundation/FinRL-Trading?label=PRs)
 ![Visitors](https://api.visitorbadge.io/api/VisitorHit?user=AI4Finance-Foundation&repo=FinRL-Trading&countColor=%23B17A)
 
-*A deployment-consistent trading system that unifies data processing, strategy composition, backtesting, and broker execution through a weight-centric interface.*
+_A deployment-consistent trading system that unifies data processing, strategy composition, backtesting, and broker execution through a weight-centric interface._
 
 [Paper](https://arxiv.org/abs/2603.21330) | [Quick Start](#quick-start) | [Strategies](#strategies) | [Results](#results) | [Discord](https://discord.gg/trsr8SXpW5)
 
@@ -31,9 +30,9 @@
 
 ## About
 
-**FinRL-X** is a next-generation, **AI-native** quantitative trading infrastructure that redefines how researchers and practitioners build, test, and deploy algorithmic trading strategies. 
+**FinRL-X** is a next-generation, **AI-native** quantitative trading infrastructure that redefines how researchers and practitioners build, test, and deploy algorithmic trading strategies.
 
-Introduced in our paper *"FinRL-X: An AI-Native Modular Infrastructure for Quantitative Trading"* ([arXiv:2603.21330](https://arxiv.org/abs/2603.21330)), FinRL-X succeeds the original [FinRL](https://github.com/AI4Finance-Foundation/FinRL) framework with a fully modernized architecture designed for the LLM and agentic AI era.
+Introduced in our paper _"FinRL-X: An AI-Native Modular Infrastructure for Quantitative Trading"_ ([arXiv:2603.21330](https://arxiv.org/abs/2603.21330)), FinRL-X succeeds the original [FinRL](https://github.com/AI4Finance-Foundation/FinRL) framework with a fully modernized architecture designed for the LLM and agentic AI era.
 
 > FinRL-X is **not just a library** — it is a full-stack trading platform engineered around modularity, reproducibility, and production-readiness, supporting everything from ML-based stock selection and professional backtesting to live brokerage execution.
 
@@ -53,12 +52,12 @@ where $\mathcal{S}$ denotes stock selection, $\mathcal{A}$ portfolio allocation,
 
 <br/>
 
-| Layer | Role | Components |
-|:------|:-----|:-----------|
-| **Data** | Unified market data pipeline | FMP, Yahoo Finance, WRDS; LLM sentiment preprocessing; SQLite cache |
-| **Strategy** | Weight-centric signal generation | Stock selection, portfolio allocation, timing adjustment, risk overlay |
-| **Backtest** | Offline evaluation | `bt`-powered engine with multi-benchmark comparison and transaction costs |
-| **Execution** | Live/paper trading | Alpaca multi-account integration with pre-trade risk checks |
+| Layer         | Role                             | Components                                                                |
+| :------------ | :------------------------------- | :------------------------------------------------------------------------ |
+| **Data**      | Unified market data pipeline     | FMP, Yahoo Finance, WRDS; LLM sentiment preprocessing; SQLite cache       |
+| **Strategy**  | Weight-centric signal generation | Stock selection, portfolio allocation, timing adjustment, risk overlay    |
+| **Backtest**  | Offline evaluation               | `bt`-powered engine with multi-benchmark comparison and transaction costs |
+| **Execution** | Live/paper trading               | Alpaca multi-account integration with pre-trade risk checks               |
 
 ```
 finrl-trading/
@@ -98,13 +97,13 @@ FinRL-X implements three use cases from the paper, each demonstrating different 
 
 Compares heterogeneous allocation methods under a unified interface:
 
-| Method | Type | Description |
-|:-------|:-----|:------------|
-| Equal Weight | Classical | Uniform 1/N allocation |
-| Mean-Variance | Classical | Markowitz optimization |
-| Minimum Variance | Classical | Minimize portfolio volatility |
-| DRL Allocator | Learning | PPO/SAC continuous weight generation |
-| KAMA Timing | Signal | Kaufman adaptive trend overlay |
+| Method           | Type      | Description                          |
+| :--------------- | :-------- | :----------------------------------- |
+| Equal Weight     | Classical | Uniform 1/N allocation               |
+| Mean-Variance    | Classical | Markowitz optimization               |
+| Minimum Variance | Classical | Minimize portfolio volatility        |
+| DRL Allocator    | Learning  | PPO/SAC continuous weight generation |
+| KAMA Timing      | Signal    | Kaufman adaptive trend overlay       |
 
 All methods output the same weight vector, making them directly composable with timing and risk overlays.
 
@@ -120,14 +119,14 @@ Quarterly selection of top-25% NASDAQ-100 stocks via ML fundamental scoring, com
 
 A research-grade, walk-forward-safe rotation strategy with daily risk monitoring:
 
-| Component | Detail |
-|:----------|:-------|
-| **Asset Groups** | Growth Tech, Real Assets, Defensive — max 2 active per week |
-| **Group Selection** | Information Ratio relative to QQQ benchmark |
-| **Intra-Group Ranking** | Residual momentum with robust Z-score exception handling |
-| **Market Regime** | Slow regime (26-week trend + VIX) + Fast Risk-Off (3-day shock) |
-| **Risk Controls** | Trailing stop-loss, absolute stop-loss, cooldown periods |
-| **Rebalance** | Weekly (full) + daily monitoring (fast risk-off, stop-loss adjustments) |
+| Component               | Detail                                                                  |
+| :---------------------- | :---------------------------------------------------------------------- |
+| **Asset Groups**        | Growth Tech, Real Assets, Defensive — max 2 active per week             |
+| **Group Selection**     | Information Ratio relative to QQQ benchmark                             |
+| **Intra-Group Ranking** | Residual momentum with robust Z-score exception handling                |
+| **Market Regime**       | Slow regime (26-week trend + VIX) + Fast Risk-Off (3-day shock)         |
+| **Risk Controls**       | Trailing stop-loss, absolute stop-loss, cooldown periods                |
+| **Rebalance**           | Weekly (full) + daily monitoring (fast risk-off, stop-loss adjustments) |
 
 ```bash
 # Run the adaptive rotation backtest
@@ -147,15 +146,15 @@ A research-grade, walk-forward-safe rotation strategy with daily risk monitoring
   <img src="https://github.com/AI4Finance-Foundation/FinRL-Trading/blob/master/figs/All_Backtests_v2.png" width="900"/>
 </div>
 
-| Metric | Rolling Strategy | Adaptive Rotation | QQQ | SPY |
-|:-------|:---:|:---:|:---:|:---:|
-| Cumulative Return | 5.98x | 4.80x | 4.02x | 2.80x |
-| Annualized Return | 25.85% | 22.32% | 19.56% | 14.14% |
-| Annualized Volatility | 27.85% | 20.30% | 24.20% | 19.61% |
-| **Sharpe Ratio** | 0.93 | **1.10** | 0.81 | 0.72 |
-| Max Drawdown | -38.95% | **-21.46%** | -35.12% | -33.72% |
-| **Calmar Ratio** | 0.66 | **1.04** | 0.56 | 0.42 |
-| Win Rate | 54.36% | 54.77% | 56.25% | 55.28% |
+| Metric                | Rolling Strategy | Adaptive Rotation |   QQQ   |   SPY   |
+| :-------------------- | :--------------: | :---------------: | :-----: | :-----: |
+| Cumulative Return     |      5.98x       |       4.80x       |  4.02x  |  2.80x  |
+| Annualized Return     |      25.85%      |      22.32%       | 19.56%  | 14.14%  |
+| Annualized Volatility |      27.85%      |      20.30%       | 24.20%  | 19.61%  |
+| **Sharpe Ratio**      |       0.93       |     **1.10**      |  0.81   |  0.72   |
+| Max Drawdown          |     -38.95%      |    **-21.46%**    | -35.12% | -33.72% |
+| **Calmar Ratio**      |       0.66       |     **1.04**      |  0.56   |  0.42   |
+| Win Rate              |      54.36%      |      54.77%       | 56.25%  | 55.28%  |
 
 ### Paper Trading (Oct 2025 – Mar 2026)
 
@@ -165,16 +164,16 @@ A research-grade, walk-forward-safe rotation strategy with daily risk monitoring
 
 Ensemble of Rolling Selection + Adaptive Rotation deployed on Alpaca paper trading:
 
-| Metric | Strategy | SPY | QQQ |
-|:-------|:---:|:---:|:---:|
-| Cumulative Return | **1.20x** | 0.97x | 0.95x |
-| Total Return | **+19.76%** | -2.51% | -4.79% |
-| Annualized Return | **62.16%** | -6.60% | -12.32% |
-| Annualized Volatility | 31.75% | 11.96% | 16.79% |
-| **Sharpe Ratio** | **1.96** | -0.55 | -0.73 |
-| Max Drawdown | -12.22% | -5.35% | -7.88% |
-| **Calmar Ratio** | **5.09** | -1.23 | -1.56 |
-| Win Rate | **64.89%** | 52.13% | 54.02% |
+| Metric                |  Strategy   |  SPY   |   QQQ   |
+| :-------------------- | :---------: | :----: | :-----: |
+| Cumulative Return     |  **1.20x**  | 0.97x  |  0.95x  |
+| Total Return          | **+19.76%** | -2.51% | -4.79%  |
+| Annualized Return     | **62.16%**  | -6.60% | -12.32% |
+| Annualized Volatility |   31.75%    | 11.96% | 16.79%  |
+| **Sharpe Ratio**      |  **1.96**   | -0.55  |  -0.73  |
+| Max Drawdown          |   -12.22%   | -5.35% | -7.88%  |
+| **Calmar Ratio**      |  **5.09**   | -1.23  |  -1.56  |
+| Win Rate              | **64.89%**  | 52.13% | 54.02%  |
 
 ### Dynamic Sector Rotation
 
@@ -238,8 +237,8 @@ cp .env.example .env
 ```bash
 # Backtest — Adaptive Rotation (2023-01-01 to 2024-12-31)
 python src/strategies/run_adaptive_rotation_strategy.py \
-    --config src/strategies/AdaptiveRotationConf_v1.2.1.yaml \
-    --backtest --start 2023-01-01 --end 2024-12-31
+    --config src/strategies/AdaptiveRotationConf_v1.2.2.yaml \
+    --backtest --start 2010-01-01 --end 2025-12-31
 
 # Single date signal
 python src/strategies/run_adaptive_rotation_strategy.py \
@@ -297,16 +296,16 @@ alpaca.execute_portfolio_rebalance(target_weights={'AAPL': 0.3, 'MSFT': 0.7})
 
 ## Evolution from FinRL
 
-| | FinRL (2020) | FinRL-X (2026) |
-|:---|:---|:---|
-| **Paradigm** | DRL-only | AI-Native (ML + DRL + LLM-ready) |
-| **Architecture** | Coupled monolith | Decoupled modular layers |
-| **Interface** | Gym state/action spaces | Weight-centric contract |
-| **Data** | 14 manual processors | Auto-select: Yahoo / FMP / WRDS |
-| **Backtesting** | Hand-rolled loops | `bt` engine + multi-benchmark |
-| **Live Trading** | Basic Alpaca | Multi-account + risk controls |
-| **Config** | `config.py` | Pydantic + `.env` |
-| **Paper** | [arXiv:2011.09607](https://arxiv.org/abs/2011.09607) | [arXiv:2603.21330](https://arxiv.org/abs/2603.21330) |
+|                  | FinRL (2020)                                         | FinRL-X (2026)                                       |
+| :--------------- | :--------------------------------------------------- | :--------------------------------------------------- |
+| **Paradigm**     | DRL-only                                             | AI-Native (ML + DRL + LLM-ready)                     |
+| **Architecture** | Coupled monolith                                     | Decoupled modular layers                             |
+| **Interface**    | Gym state/action spaces                              | Weight-centric contract                              |
+| **Data**         | 14 manual processors                                 | Auto-select: Yahoo / FMP / WRDS                      |
+| **Backtesting**  | Hand-rolled loops                                    | `bt` engine + multi-benchmark                        |
+| **Live Trading** | Basic Alpaca                                         | Multi-account + risk controls                        |
+| **Config**       | `config.py`                                          | Pydantic + `.env`                                    |
+| **Paper**        | [arXiv:2011.09607](https://arxiv.org/abs/2011.09607) | [arXiv:2603.21330](https://arxiv.org/abs/2603.21330) |
 
 ### Migration from FinRL
 
@@ -324,15 +323,15 @@ gym.Env subclassing                  →  BaseStrategy.generate_weights()
 
 ## Comparison with Existing Platforms
 
-| Feature | FinRL-X | [Qlib](https://github.com/microsoft/qlib) | [TradingAgents](https://github.com/TauricResearch/TradingAgents) | [Zipline](https://github.com/quantopian/zipline)/[Backtrader](https://github.com/mementum/backtrader) | [QuantConnect Lean](https://github.com/QuantConnect/Lean) |
-|:--------|:-------:|:----:|:-------------:|:------------------:|:-----------------:|
-| Primary Orientation | End-to-End System | ML Research | Agent-Based Trading | Backtesting | End-to-End Platform |
-| Broker Integration | Yes | - | - | - | Yes |
-| Deployment-Consistent Interface | Yes | - | - | - | Partial |
-| Reinforcement Learning Support | Yes | Limited | Yes | - | Partial |
-| Modular Strategy Pipeline | Yes | - | - | - | Partial |
-| Portfolio-Level Risk Overlay | Yes | - | - | - | Partial |
-| Open Source License | Apache 2.0 | MIT | Apache 2.0 | Apache 2.0 | Apache 2.0 |
+| Feature                         |      FinRL-X      | [Qlib](https://github.com/microsoft/qlib) | [TradingAgents](https://github.com/TauricResearch/TradingAgents) | [Zipline](https://github.com/quantopian/zipline)/[Backtrader](https://github.com/mementum/backtrader) | [QuantConnect Lean](https://github.com/QuantConnect/Lean) |
+| :------------------------------ | :---------------: | :---------------------------------------: | :--------------------------------------------------------------: | :---------------------------------------------------------------------------------------------------: | :-------------------------------------------------------: |
+| Primary Orientation             | End-to-End System |                ML Research                |                       Agent-Based Trading                        |                                              Backtesting                                              |                    End-to-End Platform                    |
+| Broker Integration              |        Yes        |                     -                     |                                -                                 |                                                   -                                                   |                            Yes                            |
+| Deployment-Consistent Interface |        Yes        |                     -                     |                                -                                 |                                                   -                                                   |                          Partial                          |
+| Reinforcement Learning Support  |        Yes        |                  Limited                  |                               Yes                                |                                                   -                                                   |                          Partial                          |
+| Modular Strategy Pipeline       |        Yes        |                     -                     |                                -                                 |                                                   -                                                   |                          Partial                          |
+| Portfolio-Level Risk Overlay    |        Yes        |                     -                     |                                -                                 |                                                   -                                                   |                          Partial                          |
+| Open Source License             |    Apache 2.0     |                    MIT                    |                            Apache 2.0                            |                                              Apache 2.0                                               |                        Apache 2.0                         |
 
 ---
 

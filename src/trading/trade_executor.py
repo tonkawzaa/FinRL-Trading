@@ -30,8 +30,8 @@ try:
     from ..strategies.base_strategy import BaseStrategy, StrategyResult
 except ImportError:
     # Fallback for direct module testing
-    from alpaca_manager import AlpacaManager, OrderRequest, OrderResponse
-    from strategies.base_strategy import BaseStrategy, StrategyResult
+    from src.trading.alpaca_manager import AlpacaManager, OrderRequest, OrderResponse
+    from src.strategies.base_strategy import BaseStrategy, StrategyResult
 
 logger = logging.getLogger(__name__)
 

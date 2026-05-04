@@ -15,8 +15,19 @@ import plotly.express as px
 from plotly.subplots import make_subplots
 from datetime import datetime, timedelta
 import logging
+import sys
 from pathlib import Path
 import json
+
+# Add project root and src to path to allow direct execution with streamlit
+current_file = Path(__file__).resolve()
+src_dir = current_file.parent.parent
+project_root = src_dir.parent
+
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
+if str(src_dir) not in sys.path:
+    sys.path.insert(0, str(src_dir))
 
 # Import project modules
 try:
@@ -29,14 +40,14 @@ try:
     from ..utils.logging_utils import setup_logging
 except ImportError:
     # Fallback for direct module testing
-    from config.settings import get_config
-    from data.data_store import get_data_store
-    from strategies.base_strategy import create_strategy, StrategyConfig
-    from backtest.backtest_engine import BacktestEngine, BacktestConfig
-    from trading.alpaca_manager import create_alpaca_account_from_env
-    from trading.trade_executor import TradeExecutor, ExecutionConfig
+    from src.config.settings import get_config
+    from src.data.data_store import get_data_store
+    from src.strategies.base_strategy import create_strategy, StrategyConfig
+    from src.backtest.backtest_engine import BacktestEngine, BacktestConfig
+    from src.trading.alpaca_manager import create_alpaca_account_from_env
+    from src.trading.trade_executor import TradeExecutor, ExecutionConfig
     try:
-        from utils.logging_utils import setup_logging
+        from src.utils.logging_utils import setup_logging
     except ImportError:
         setup_logging = None
 
@@ -131,7 +142,7 @@ def show_overview():
     # Recent activity
     st.subheader("Recent Activity")
     activity_data = pd.DataFrame({
-        'Time': pd.date_range('2024-01-01 09:00', periods=5, freq='1H'),
+        'Time': pd.date_range('2024-01-01 09:00', periods=5, freq='1h'),
         'Action': ['Strategy Execution', 'Portfolio Rebalance', 'Data Update', 'Order Filled', 'Strategy Backtest'],
         'Status': ['Success', 'Success', 'Success', 'Success', 'Completed'],
         'Details': ['ML Strategy executed', 'Quarterly rebalance', 'S&P 500 data updated', 'AAPL order filled', 'Backtest completed']

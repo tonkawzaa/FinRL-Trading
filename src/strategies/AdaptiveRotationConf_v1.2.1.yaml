@@ -50,6 +50,19 @@ asset_groups:
       - AMZN
       - GOOGL
       - TSLA
+      - AVGO
+      - NFLX
+      - ADBE
+      - CRM
+      - AMD
+      - INTC
+      - CSCO
+      - QCOM
+      - INTU
+      - NOW
+      - ORCL
+      - AMAT
+      - TXN
 
   group_b_real_assets:
     max_assets: 2
@@ -61,6 +74,24 @@ asset_groups:
       - BHP
       - GLD
       - SLV
+      - SLB
+      - EOG
+      - NEM
+      - VLO
+      - PSA
+      - PLD
+      - AMT
+      - EQIX
+      - CCI
+      - O
+      - DLR
+      - SPG
+      - HAL
+      - MPC
+      - PSX
+      - OXY
+      - NUE
+      - DOW
 
   group_c_defensive:
     max_assets: 2
@@ -72,6 +103,26 @@ asset_groups:
       - IAU
       - SHY
       - UUP
+      - JNJ
+      - UNH
+      - PG
+      - KO
+      - PEP
+      - WMT
+      - MCD
+      - DUK
+      - SO
+      - NEE
+      - ABT
+      - TMO
+      - MRK
+      - PFE
+      - LLY
+      - AEP
+      - SRE
+      - EXC
+      - KMB
+      - CL
 
 # -----------------------
 # Market Regime (Slow)

@@ -339,41 +339,26 @@ def main():
 
     set_global_seed(42)
 
-    print("Loading price data...")
-    usecols = [
-        "datadate", "prcod", "prccd", "prchd", "prcld", "cshtrd", "ajexdi", "gvkey"
-    ]
+    import sqlite3
+    print("Loading price data from SQLite database...")
+    conn = sqlite3.connect("./data/finrl_trading.db")
+    query = """
+    SELECT 
+        date AS datadate,
+        open AS prcod,
+        close AS prccd,
+        high AS prchd,
+        low AS prcld,
+        volume AS cshtrd,
+        close / adj_close AS ajexdi,
+        ticker AS gvkey
+    FROM price_data
+    """
+    df_price = pd.read_sql_query(query, conn)
+    conn.close()
+    
+    df_price['ajexdi'] = df_price['ajexdi'].replace([np.inf, -np.inf], np.nan).fillna(1.0)
 
-    dtypes = {
-        "prcod": "float32",
-        "prccd": "float32",
-        "prchd": "float32",
-        "prcld": "float32",
-        "cshtrd": "float32",   # volume as float32 is fine
-        "ajexdi": "float32",
-        "gvkey": "int32",
-    }
-
-    # If you have pandas>=2.0 and pyarrow installed, this is the most memory-efficient:
-    # df_price = pd.read_csv(
-    #     "./data_processor/sp500_tickers_daily_price_20250712.csv",
-    #     usecols=usecols,
-    #     dtype=dtypes,
-    #     parse_dates=["datadate"],
-    #     engine="pyarrow",
-    # )
-
-    # Otherwise, use the C engine with low_memory off:
-    df_price = pd.read_csv(
-        "./data_processor/sp500_tickers_daily_price_20250712.csv",
-        usecols=usecols,
-        dtype=dtypes,
-        parse_dates=["datadate"],
-        low_memory=False,
-        engine="c",
-    )
-
-    #df_price = pd.read_csv("./data_processor/sp500_tickers_daily_price_20250712.csv")
     print(f"Price data loaded: {df_price.shape}")
     print(f"Price data columns: {list(df_price.columns)}")
     print(f"Sample data:")
@@ -386,9 +371,9 @@ def main():
     df_price['close'] = df_price['prccd']
     df_price['high'] = df_price['prchd']
     df_price['low'] = df_price['prcld']
-    df_price['volume'] =df_price['cshtrd']
+    df_price['volume'] = df_price['cshtrd']
 
-    df = df_price[['date', 'open', 'close', 'high', 'low','adjcp','volume', 'gvkey']]
+    df = df_price[['date', 'open', 'close', 'high', 'low','adjcp','volume', 'gvkey']].copy()
     print(f"Processed data shape: {df.shape}")
     print(f"Processed data columns: {list(df.columns)}")
 
@@ -410,7 +395,20 @@ def main():
     df['day'] = [x.weekday() for x in df['date']]
     df.drop_duplicates(['gvkey', 'date'], inplace=True)
     print(f"After removing duplicates: {df.shape}")
-    selected_stock = pd.read_csv("./result/stock_selected.csv")
+
+    print("Loading fundamental data to determine trade dates and stocks...")
+    df_fund = pd.read_csv("./data/fundamental_data_full.csv")
+    df_fund = df_fund.dropna(subset=['tradedate', 'ticker'])
+    
+    all_stocks_info = {}
+    trade_dates = []
+    
+    for td, group in df_fund.groupby('tradedate'):
+        ts_key = pd.to_datetime(td)
+        all_stocks_info[ts_key] = pd.DataFrame({'gvkey': group['ticker'].values})
+        trade_dates.append(td)
+        
+    selected_stock = pd.DataFrame({'trade_date': trade_dates})
 
     # Convert trade_date to datetime and filter from 2018-03-01 to current date
     selected_stock['trade_date'] = pd.to_datetime(selected_stock['trade_date'])
@@ -423,12 +421,6 @@ def main():
         (selected_stock.trade_date <= current_date)
     ].reset_index(drop=True)
     print(f"Filtered selected_stock shape (2018-03-01 to {current_date}): {selected_stock.shape}")
-
-    with open('./output/all_return_table.pickle', 'rb') as handle:
-        all_return_table = pickle.load(handle)
-
-    with open('./output/all_stocks_info.pickle', 'rb') as handle:
-        all_stocks_info = pickle.load(handle)
 
     # Get only the trade dates that exist in all_stocks_info
     available_trade_dates = list(all_stocks_info.keys())
