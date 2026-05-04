@@ -59,14 +59,15 @@ class FMPSettings(BaseSettings):
         env_prefix = "FMP_"
 
 
-class OpenAISettings(BaseSettings):
-    """OpenAI GPT configuration settings."""
+class GeminiSettings(BaseSettings):
+    """Google Gemini configuration settings."""
     api_key: Optional[SecretStr] = None
-    model: str = "gpt-4o-mini"
+    model: str = "gemini-2.5-flash"
     request_timeout: int = 30
+    enable_ai: bool = False
 
     class Config:
-        env_prefix = "OPENAI_"
+        env_prefix = "GEMINI_"
 
 
 class DataSettings(BaseSettings):
@@ -158,7 +159,7 @@ class FinRLSettings(BaseSettings):
     alpaca: AlpacaSettings = AlpacaSettings()
     wrds: WRDSSettings = WRDSSettings()
     fmp: FMPSettings = FMPSettings()
-    openai: OpenAISettings = OpenAISettings()
+    gemini: GeminiSettings = GeminiSettings()
     data: DataSettings = DataSettings()
     strategy: StrategySettings = StrategySettings()
     trading: TradingSettings = TradingSettings()
@@ -268,10 +269,11 @@ WRDS_DATABASE=wrds
 # Financial Modeling Prep API Settings
 FMP_API_KEY=your_fmp_api_key_here
 
-# OpenAI GPT Settings
-OPENAI_API_KEY=your_openai_api_key_here
-OPENAI_MODEL=gpt-4o-mini
-OPENAI_REQUEST_TIMEOUT=30
+# Google Gemini Settings
+GEMINI_API_KEY=your_gemini_api_key_here
+GEMINI_MODEL=gemini-2.5-flash
+GEMINI_REQUEST_TIMEOUT=30
+GEMINI_ENABLE_AI=false
 
 # Data Management Settings
 # DATA_BASE_DIR: Directory where the SQLite database and all data files are stored

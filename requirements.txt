@@ -21,7 +21,7 @@ python-dotenv>=1.0.0
 alpaca-py>=0.13.0
 
 # LLM / NLP
-openai>=1.40.0
+google-genai>=1.0.0
 
 # Trading calendar (market holidays and trading days)
 pandas-market-calendars>=4.3.0

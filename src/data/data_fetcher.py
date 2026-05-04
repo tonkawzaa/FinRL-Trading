@@ -164,8 +164,8 @@ class FMPFetcher(BaseDataFetcher, DataSource):
         # Offline mode when API key is not provided; computed lazily but default here
         self.api_key = self._get_api_key()
         self.offline_mode = not bool(self.api_key)
-        self._openai_client = None
-        self._openai_api_key: Optional[str] = None
+        self._gemini_client = None
+        self._gemini_api_key: Optional[str] = None
         self._sentiment_model: Optional[str] = None
         self._sentiment_request_timeout: int = 30
         self._init_sentiment_settings()
@@ -188,40 +188,40 @@ class FMPFetcher(BaseDataFetcher, DataSource):
             return None
 
     def _init_sentiment_settings(self) -> None:
-        """Load GPT sentiment analysis configuration."""
+        """Load Gemini sentiment analysis configuration."""
         try:
             from src.config.settings import get_config
             config = get_config()
-            openai_cfg = getattr(config, 'openai', None)
-            if openai_cfg and openai_cfg.api_key:
-                self._openai_api_key = openai_cfg.api_key.get_secret_value()
-                self._sentiment_model = openai_cfg.model
-                self._sentiment_request_timeout = getattr(openai_cfg, 'request_timeout', 30) or 30
+            gemini_cfg = getattr(config, 'gemini', None)
+            if gemini_cfg and getattr(gemini_cfg, 'enable_ai', False) and gemini_cfg.api_key:
+                self._gemini_api_key = gemini_cfg.api_key.get_secret_value()
+                self._sentiment_model = gemini_cfg.model
+                self._sentiment_request_timeout = getattr(gemini_cfg, 'request_timeout', 30) or 30
             else:
-                self._openai_api_key = None
+                self._gemini_api_key = None
                 self._sentiment_model = None
         except Exception as exc:
-            logger.debug(f"Failed to initialize OpenAI settings: {exc}")
-            self._openai_api_key = None
+            logger.debug(f"Failed to initialize Gemini settings: {exc}")
+            self._gemini_api_key = None
             self._sentiment_model = None
 
-    def _get_openai_client(self):
-        """Lazily initialize OpenAI client."""
-        if not self._openai_api_key:
+    def _get_gemini_client(self):
+        """Lazily initialize Google Gemini client."""
+        if not self._gemini_api_key:
             return None
-        if self._openai_client is not None:
-            return self._openai_client
+        if self._gemini_client is not None:
+            return self._gemini_client
         try:
-            from openai import OpenAI
+            from google import genai
         except ImportError:
-            logger.warning("openai package not installed; sentiment analysis unavailable")
+            logger.warning("google-genai package not installed; sentiment analysis unavailable")
             return None
         try:
-            self._openai_client = OpenAI(api_key=self._openai_api_key)
+            self._gemini_client = genai.Client(api_key=self._gemini_api_key)
         except Exception as exc:
-            logger.warning(f"Failed to initialize OpenAI client: {exc}")
-            self._openai_client = None
-        return self._openai_client
+            logger.warning(f"Failed to initialize Gemini client: {exc}")
+            self._gemini_client = None
+        return self._gemini_client
 
     def _fetch_fmp_data(self, ticker: str, endpoint: str, period: str,
                         start_date: Optional[str] = None, end_date: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -353,7 +353,7 @@ class FMPFetcher(BaseDataFetcher, DataSource):
             return pd.DataFrame({'tickers': [], 'sectors': [], 'dateFirstAdded': []})
 
     def _parse_sentiment_response(self, content: str) -> Dict[str, Any]:
-        """Parse GPT response into sentiment payload."""
+        """Parse Gemini response into sentiment payload."""
         if not content:
             return {}
         try:
@@ -377,19 +377,21 @@ class FMPFetcher(BaseDataFetcher, DataSource):
         return {}
 
     def _annotate_sentiment(self, articles: List[Dict[str, Any]], sentiment_model: Optional[str] = None) -> None:
-        """Call GPT API to annotate sentiment for a batch of news articles."""
+        """Call Gemini API to annotate sentiment for a batch of news articles."""
         if not articles:
             return
 
-        client = self._get_openai_client()
+        client = self._get_gemini_client()
         if not client:
-            logger.info("OpenAI client unavailable, skip sentiment analysis")
+            logger.info("Gemini client unavailable, skip sentiment analysis")
             return
 
         model = sentiment_model or self._sentiment_model
         if not model:
             logger.info("Sentiment model not configured, skip sentiment analysis")
             return
+
+        from google.genai import types
 
         for article in articles:
             title = (article.get('title') or '').strip()
@@ -400,22 +402,23 @@ class FMPFetcher(BaseDataFetcher, DataSource):
                 body = body[:1500]
 
             prompt = (
-                "请阅读以下新闻并判断整体情绪是 positive、neutral 还是 negative。"
-                " 仅返回 JSON，如 {\"sentiment\": \"neutral\", \"confidence\": 0.65}。"
-                f"\n标题: {title}\n内容: {body}"
+                "You are a financial news sentiment analyst. Only output JSON.\n"
+                "Read the following news and determine whether the overall sentiment is "
+                "positive, neutral, or negative.\n"
+                "Return only JSON, e.g. {\"sentiment\": \"neutral\", \"confidence\": 0.65}.\n"
+                f"\nTitle: {title}\nContent: {body}"
             )
 
             try:
-                response = client.chat.completions.create(
+                response = client.models.generate_content(
                     model=model,
-                    messages=[
-                        {"role": "system", "content": "你是一名金融新闻情绪分析助手，只输出JSON。"},
-                        {"role": "user", "content": prompt}
-                    ],
-                    temperature=0.1,
-                    max_tokens=60
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        temperature=0.1,
+                        max_output_tokens=60,
+                    ),
                 )
-                message = response.choices[0].message.content.strip()
+                message = response.text.strip()
                 parsed = self._parse_sentiment_response(message)
                 if parsed.get('sentiment'):
                     article['sentiment'] = parsed['sentiment']
@@ -469,7 +472,7 @@ class FMPFetcher(BaseDataFetcher, DataSource):
         sentiment_model: Optional[str] = None,
         force_refresh: bool = False
     ) -> pd.DataFrame:
-        """Get news from FMP with local caching and optional GPT sentiment analysis."""
+        """Get news from FMP with local caching and optional Gemini sentiment analysis."""
         if not ticker:
             raise ValueError("ticker is required for get_news")
 
@@ -630,18 +633,18 @@ class FMPFetcher(BaseDataFetcher, DataSource):
                             period_raw = it.get('period')
                             period = str(period_raw).upper() if period_raw is not None else None
                             if year is not None and period:
-                                # 统一使用 calendarYear + period(Q1/Q2/Q3/Q4) 的季度末日期作为键
+                                # Uniformly use the end of quarter date from calendarYear + period(Q1/Q2/Q3/Q4) as key
                                 q_map = {
                                     'Q1': (3, 31), 
                                     'Q2': (6, 30), 
                                     'Q3': (9, 30), 
                                     'Q4': (12, 31),
-                                    'FY': (12, 31),  # 若出现 FY，按 Q4 处理
+                                    'FY': (12, 31),  # If FY appears, treat as Q4
                                 }
                                 md = q_map.get(period)
                                 if md:
                                     key_ts = pd.Timestamp(int(year), md[0], md[1])
-                            # 若缺失 calendarYear/period，则回退到原始 date，再映射到所在公历季度末
+                            # If calendarYear/period is missing, fallback to original date, then map to its quarter end
                             if key_ts is None and 'date' in it and it.get('date'):
                                 d = pd.to_datetime(it['date'], errors='coerce')
                                 if pd.notna(d):
@@ -665,7 +668,7 @@ class FMPFetcher(BaseDataFetcher, DataSource):
                 all_quarter_dates = sorted(set(income_by_date.keys()) | set(balance_by_date.keys()) | set(cashflow_by_date.keys()))
                 inrange_quarters = [d for d in all_quarter_dates if start_dt <= d <= end_dt]
 
-                # If aligning, create a mapping from original qd -> aligned date (仅用于计算 y_return 的价格)
+                # If aligning, create a mapping from original qd -> aligned date (only used to calculate price for y_return)
                 if align_quarter_dates:
                     aligned_dates = {qd: align_to_mjsd_first(qd) for qd in inrange_quarters}
                 else:
@@ -708,13 +711,13 @@ class FMPFetcher(BaseDataFetcher, DataSource):
                     except Exception:
                         revenue = 0.0
 
-                    # 价格：区分原始季度日与对齐日
+                    # Price: differentiate between original quarter date and aligned date
                     prccd_orig = np.nan
                     adj_close_orig = np.nan
                     prccd_aligned = np.nan
                     adj_close_aligned = np.nan
                     if not prices_t.empty and 'datadate' in prices_t.columns:
-                        # 原始季度日价格：优先取季度日(含)之后最近交易日，若无则回退到之前最近交易日
+                        # Original quarter date price: prefer nearest trading day after (inclusive) quarter date, fallback to nearest trading day before
                         price_row_orig = prices_t[prices_t['datadate'] >= qd].head(1)
                         if price_row_orig.empty:
                             price_row_orig = prices_t[prices_t['datadate'] < qd].tail(1)
@@ -724,7 +727,7 @@ class FMPFetcher(BaseDataFetcher, DataSource):
                             if pd.notna(ac_o):
                                 adj_close_orig = float(ac_o)
 
-                        # 对齐日价格：仅当开启对齐时计算，用于 y_return
+                        # Aligned date price: only calculated when alignment is enabled, used for y_return
                         if align_quarter_dates:
                             max_days_forward = 10
                             price_row_aln = pd.DataFrame()
@@ -1099,7 +1102,7 @@ class FMPFetcher(BaseDataFetcher, DataSource):
             
             for ticker, date_ranges in tqdm(tickers_to_fetch.items()):
                 try:
-                    # 取最小和最大日期
+                    # Get min and max dates
                     min_date = min(start for start, _ in date_ranges)
                     max_date = max(end for _, end in date_ranges)
 
@@ -1406,16 +1409,16 @@ def fetch_news(ticker: str, start_date: str, end_date: str,
                force_refresh: bool = False,
                preferred_source='FMP') -> pd.DataFrame:
     """
-    Fetch news for a ticker with optional GPT情绪分析.
+    Fetch news for a ticker with optional Gemini sentiment analysis.
 
     Args:
-        ticker: 股票代码
-        start_date: 起始日期 (YYYY-MM-DD)
-        end_date: 结束日期 (YYYY-MM-DD)
-        analyze_sentiment: 是否调用 GPT 进行情绪分析
-        sentiment_model: 覆盖默认 GPT 模型
-        force_refresh: 是否忽略缓存强制重新抓取
-        preferred_source: 指定数据源
+        ticker: Ticker symbol
+        start_date: Start date (YYYY-MM-DD)
+        end_date: End date (YYYY-MM-DD)
+        analyze_sentiment: Whether to use Gemini for sentiment analysis
+        sentiment_model: Override default Gemini model
+        force_refresh: Whether to ignore cache and force fetch
+        preferred_source: Specify data source
 
     Returns:
         DataFrame of news articles with sentiment metadata.
@@ -1443,7 +1446,7 @@ if __name__ == "__main__":
     components = fetch_sp500_tickers()
     print(f"Fetched {len(components)} tickers")
 
-    # # 按字母顺序对tickers排序
+    # # Sort tickers alphabetically
     # tickers = sorted(tickers)
     # tickers = ["AEP", "ADM", "INCY", "LIN", "URI", "NVDA"]
     tickers = ["NVDA"]
@@ -1473,7 +1476,7 @@ if __name__ == "__main__":
     # )
     # print(f"Fetched {len(prices)} price records")
 
-    # Fetch news sample with情绪分析（需配置 FMP & OpenAI API Key）
+    # Fetch news sample with sentiment analysis (requires FMP & Gemini API Key)
     news_df = fetch_news(
         ticker="NVDA",
         start_date="2025-01-01",
