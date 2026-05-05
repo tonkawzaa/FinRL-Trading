@@ -11,6 +11,7 @@ Provides unified data format for all sources.
 import os
 import logging
 import json
+import time
 from typing import List, Optional, Dict, Any, Protocol, Tuple
 from datetime import datetime
 from abc import ABC
@@ -23,6 +24,15 @@ import numpy as np
 import concurrent.futures
 from tqdm import tqdm
 import pandas_market_calendars as mcal
+
+
+class FMPRateLimitError(Exception):
+    """Raised when FMP API returns 402/429, indicating daily quota exhausted."""
+    def __init__(self, status_code: int, ticker: str, endpoint: str):
+        self.status_code = status_code
+        self.ticker = ticker
+        self.endpoint = endpoint
+        super().__init__(f"FMP rate limit ({status_code}) for {ticker}/{endpoint}")
 
 import sys
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
@@ -160,7 +170,7 @@ class FMPFetcher(BaseDataFetcher, DataSource):
     def __init__(self, cache_dir: str = "./data/cache"):
         super().__init__(cache_dir)
         # self.base_url = "https://financialmodelingprep.com/api/v3"
-        self.base_url = "https://financialmodelingprep.com/stable/"
+        self.base_url = "https://financialmodelingprep.com/stable"
         # Offline mode when API key is not provided; computed lazily but default here
         self.api_key = self._get_api_key()
         self.offline_mode = not bool(self.api_key)
@@ -278,20 +288,41 @@ class FMPFetcher(BaseDataFetcher, DataSource):
             if end_date:
                 url += f"&to={end_date}"
 
-        try:
-            response = requests.get(url)
-            response.raise_for_status()
-            data = response.json()
-            # Save raw payload for fundamentals endpoints
-            if payload_key and start_date and end_date:
-                try:
-                    self.data_store._save_raw_payload('FMP', ticker, payload_key, start_date, end_date, data)
-                except Exception as se:
-                    logger.debug(f"Failed to save raw FMP payload {payload_key} for {ticker}: {se}")
-            return data
-        except requests.exceptions.RequestException as e:
-            logger.warning(f"Failed to fetch {endpoint} data for {ticker}: {e}")
-            return []
+        max_retries = 3
+        for attempt in range(max_retries + 1):
+            try:
+                response = requests.get(url)
+                response.raise_for_status()
+                data = response.json()
+                # Save raw payload for fundamentals endpoints
+                if payload_key and start_date and end_date:
+                    try:
+                        self.data_store._save_raw_payload('FMP', ticker, payload_key, start_date, end_date, data)
+                    except Exception as se:
+                        logger.debug(f"Failed to save raw FMP payload {payload_key} for {ticker}: {se}")
+                return data
+            except requests.exceptions.HTTPError as http_err:
+                status = http_err.response.status_code if http_err.response is not None else 0
+                if status == 429:
+                    # Rate limited — retry with exponential backoff
+                    if attempt < max_retries:
+                        wait = 2 ** attempt * 5  # 5s, 10s, 20s
+                        logger.warning(f"FMP 429 rate limit for {ticker}/{endpoint}, retrying in {wait}s (attempt {attempt+1}/{max_retries})")
+                        time.sleep(wait)
+                        continue
+                    else:
+                        logger.error(f"FMP 429 rate limit exhausted for {ticker}/{endpoint} after {max_retries} retries")
+                        raise FMPRateLimitError(429, ticker, endpoint)
+                elif status == 402:
+                    logger.warning(f"FMP 402 Payment Required for {ticker}/{endpoint} — daily quota likely exhausted")
+                    raise FMPRateLimitError(402, ticker, endpoint)
+                else:
+                    logger.warning(f"Failed to fetch {endpoint} data for {ticker}: {http_err}")
+                    return []
+            except requests.exceptions.RequestException as e:
+                logger.warning(f"Failed to fetch {endpoint} data for {ticker}: {e}")
+                return []
+        return []
 
     def get_sp500_components(self, date: str = None) -> pd.DataFrame:
         """Get S&P 500 components from FMP."""
@@ -931,6 +962,8 @@ class FMPFetcher(BaseDataFetcher, DataSource):
                     }
                     all_records.append(record)
                 
+            except FMPRateLimitError:
+                raise  # Let rate-limit errors propagate to caller for batch handling
             except Exception as e:
                 logger.error(f"Error fetching fundamentals for {ticker}: {e}")
                 continue
@@ -1095,8 +1128,9 @@ class FMPFetcher(BaseDataFetcher, DataSource):
                     ticker, missing_ranges = res
                     tickers_to_fetch[ticker] = missing_ranges
 
-        # Step 3: Fetch missing data from API
+        # Step 3: Fetch missing data from API (FMP primary, yfinance fallback)
         all_data = []
+        _fmp_402_detected = False  # Track if FMP returns 402 to switch all remaining tickers to yfinance
         if tickers_to_fetch:
             logger.info(f"Fetching price data for {len(tickers_to_fetch)} tickers from FMP")
             
@@ -1106,44 +1140,99 @@ class FMPFetcher(BaseDataFetcher, DataSource):
                     min_date = min(start for start, _ in date_ranges)
                     max_date = max(end for _, end in date_ranges)
 
-                    url = f"{self.base_url}/historical-price-eod/full?symbol={ticker}&from={min_date}&to={max_date}&apikey={self.api_key}"
-                    response = requests.get(url)
-                    response.raise_for_status()
-                    
-                    data = response.json()
+                    fetched_via_yf = False
 
-                    if isinstance(data, dict) and 'historical' in data:
-                        historical_rows = data.get('historical') or []
-                    elif isinstance(data, list):
-                        historical_rows = data
-                    else:
-                        logger.warning(f"No historical data key in response for {ticker} ({min_date} to {max_date})")
-                        historical_rows = []
+                    # Try FMP first (skip if we already know it returns 402)
+                    if not _fmp_402_detected:
+                        try:
+                            url = f"{self.base_url}/historical-price-eod/full?symbol={ticker}&from={min_date}&to={max_date}&apikey={self.api_key}"
+                            response = requests.get(url)
+                            response.raise_for_status()
 
-                    if historical_rows:
-                        ticker_data = []
-                        for item in historical_rows:
-                            record = {
-                                'gvkey': ticker,
-                                'datadate': item['date'],
-                                'tic': ticker,
-                                'prccd': item['close'],
-                                'prcod': item['open'],
-                                'prchd': item['high'],
-                                'prcld': item['low'],
-                                'cshtrd': item['volume'],
-                                'adj_close': item.get('adjClose', item['close'])
-                            }
-                            ticker_data.append(record)
-                        
-                        if ticker_data:
-                            all_data.extend(ticker_data)
-                            logger.debug(f"Fetched {len(ticker_data)} records for {ticker} ({min_date} to {max_date})")
-                        else:
-                            logger.warning(f"No historical data for {ticker} ({min_date} to {max_date})")
+                            data = response.json()
+
+                            if isinstance(data, dict) and 'historical' in data:
+                                historical_rows = data.get('historical') or []
+                            elif isinstance(data, list):
+                                historical_rows = data
+                            else:
+                                logger.warning(f"No historical data key in response for {ticker} ({min_date} to {max_date})")
+                                historical_rows = []
+
+                            if historical_rows:
+                                ticker_data = []
+                                for item in historical_rows:
+                                    record = {
+                                        'gvkey': ticker,
+                                        'datadate': item['date'],
+                                        'tic': ticker,
+                                        'prccd': item['close'],
+                                        'prcod': item['open'],
+                                        'prchd': item['high'],
+                                        'prcld': item['low'],
+                                        'cshtrd': item['volume'],
+                                        'adj_close': item.get('adjClose', item['close'])
+                                    }
+                                    ticker_data.append(record)
+
+                                if ticker_data:
+                                    all_data.extend(ticker_data)
+                                    logger.debug(f"Fetched {len(ticker_data)} records for {ticker} via FMP ({min_date} to {max_date})")
+                                else:
+                                    logger.warning(f"No historical data for {ticker} ({min_date} to {max_date})")
+                                continue  # FMP succeeded, skip yfinance fallback
+
+                        except requests.exceptions.HTTPError as http_err:
+                            status = http_err.response.status_code if http_err.response is not None else 0
+                            if status in (402, 403):
+                                if not _fmp_402_detected:
+                                    logger.warning(f"FMP returned {status} for {ticker} — switching to yfinance fallback for all remaining tickers")
+                                    _fmp_402_detected = True
+                            else:
+                                logger.warning(f"FMP HTTP error for {ticker}: {http_err}")
+                        except Exception as fmp_err:
+                            logger.warning(f"FMP error for {ticker}: {fmp_err}")
+
+                    # yfinance fallback
+                    try:
+                        yf_ticker = ticker.replace(".", "-")
+                        yf_data = yf.download(
+                            yf_ticker,
+                            start=min_date,
+                            end=(pd.to_datetime(max_date) + pd.Timedelta(days=1)).strftime('%Y-%m-%d'),
+                            auto_adjust=False,
+                            progress=False,
+                        )
+                        if yf_data is not None and not yf_data.empty:
+                            # Handle MultiIndex columns from yfinance
+                            if isinstance(yf_data.columns, pd.MultiIndex):
+                                yf_data.columns = yf_data.columns.get_level_values(0)
+                            ticker_data = []
+                            for dt_idx, row in yf_data.iterrows():
+                                record = {
+                                    'gvkey': ticker,
+                                    'datadate': dt_idx.strftime('%Y-%m-%d'),
+                                    'tic': ticker,
+                                    'prccd': float(row['Close']),
+                                    'prcod': float(row['Open']),
+                                    'prchd': float(row['High']),
+                                    'prcld': float(row['Low']),
+                                    'cshtrd': int(row['Volume']) if pd.notna(row['Volume']) else 0,
+                                    'adj_close': float(row['Adj Close']) if 'Adj Close' in row and pd.notna(row['Adj Close']) else float(row['Close']),
+                                }
+                                ticker_data.append(record)
+                            if ticker_data:
+                                all_data.extend(ticker_data)
+                                logger.debug(f"Fetched {len(ticker_data)} records for {ticker} via yfinance ({min_date} to {max_date})")
+                                fetched_via_yf = True
+                    except Exception as yf_err:
+                        logger.warning(f"yfinance fallback also failed for {ticker}: {yf_err}")
+
+                    if not fetched_via_yf:
+                        logger.warning(f"No price data fetched for {ticker} ({min_date} to {max_date})")
 
                 except Exception as e:
-                    logger.warning(f"Failed to fetch price data for {ticker} ({min_date} to {max_date}): {e}")
+                    logger.warning(f"Failed to fetch price data for {ticker}: {e}")
         else:
             logger.warning(f"No price data to fetch")
             return existing_data
@@ -1299,22 +1388,46 @@ def fetch_sp500_tickers(output_path: str = "./data/sp500_tickers.csv", preferred
 
 
 def fetch_nasdaq100_tickers(preferred_source='FMP') -> pd.DataFrame:
-    """Fetch NASDAQ 100 tickers from FMP."""
+    """Fetch NASDAQ 100 tickers from FMP (with fallback for rate limits)."""
     manager = get_data_manager(preferred_source=preferred_source)
     fetcher = manager.current_source
 
-    url = f"{fetcher.base_url}/nasdaq-constituent?apikey={fetcher.api_key}"
-    response = requests.get(url, timeout=30)
-    response.raise_for_status()
-    data = response.json()
+    try:
+        url = f"{fetcher.base_url}/nasdaq-constituent?apikey={fetcher.api_key}"
+        response = requests.get(url, timeout=30)
+        response.raise_for_status()
+        data = response.json()
 
-    df = pd.DataFrame({
-        'tickers': [item['symbol'] for item in data],
-        'sectors': [item.get('sector', '') for item in data],
-        'dateFirstAdded': [item.get('dateFirstAdded') or '' for item in data],
-    })
-    logger.info(f"Fetched {len(df)} NASDAQ 100 tickers")
-    return df
+        df = pd.DataFrame({
+            'tickers': [item['symbol'] for item in data],
+            'sectors': [item.get('sector', '') for item in data],
+            'dateFirstAdded': [item.get('dateFirstAdded') or '' for item in data],
+        })
+        logger.info(f"Fetched {len(df)} NASDAQ 100 tickers from FMP")
+        return df
+    except requests.exceptions.HTTPError as e:
+        status = e.response.status_code if e.response is not None else 0
+        if status in (402, 429):
+            logger.warning(f"FMP rate limited ({status}) for nasdaq-constituent — using hardcoded fallback list")
+            # Hardcoded NASDAQ 100 tickers (as of May 2025)
+            _NDX100 = [
+                "AAPL","ABNB","ADBE","ADI","ADP","ADSK","AEP","AMAT","AMGN","AMZN",
+                "ANSS","APP","ARM","ASML","AVGO","AZN","BIIB","BKNG","BKR","CCEP",
+                "CDNS","CDW","CEG","CHTR","CMCSA","COIN","COST","CPRT","CRWD","CSCO",
+                "CSGP","CTAS","CTSH","DASH","DDOG","DLTR","DXCM","EA","EXC","FANG",
+                "FAST","FTNT","GEHC","GFS","GILD","GOOG","GOOGL","HON","IDXX","INTC",
+                "INTU","ISRG","KDP","KHC","KLAC","LIN","LRCX","LULU","MAR","MCHP",
+                "MDB","MDLZ","MELI","META","MNST","MRVL","MSFT","MU","NFLX","NVDA",
+                "NXPI","ODFL","ON","ORLY","PANW","PAYX","PCAR","PDD","PEP","PLTR",
+                "PYPL","QCOM","REGN","ROP","ROST","SBUX","SMCI","SNPS","TEAM","TMUS",
+                "TSLA","TTD","TTWO","TXN","VRSK","VRTX","WBD","WDAY","XEL","ZS",
+            ]
+            return pd.DataFrame({
+                'tickers': _NDX100,
+                'sectors': [''] * len(_NDX100),
+                'dateFirstAdded': [''] * len(_NDX100),
+            })
+        raise
 
 
 def get_sp500_members_at_date(target_date: str,
