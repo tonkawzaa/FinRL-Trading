@@ -288,40 +288,61 @@ class FMPFetcher(BaseDataFetcher, DataSource):
             if end_date:
                 url += f"&to={end_date}"
 
+        # Try /stable/ first, then fallback to /api/v3/ on 402
+        urls_to_try = [url]
+        if '/stable/' in url:
+            v3_url = url.replace('https://financialmodelingprep.com/stable/',
+                                 'https://financialmodelingprep.com/api/v3/')
+            urls_to_try.append(v3_url)
+
         max_retries = 3
-        for attempt in range(max_retries + 1):
-            try:
-                response = requests.get(url)
-                response.raise_for_status()
-                data = response.json()
-                # Save raw payload for fundamentals endpoints
-                if payload_key and start_date and end_date:
-                    try:
-                        self.data_store._save_raw_payload('FMP', ticker, payload_key, start_date, end_date, data)
-                    except Exception as se:
-                        logger.debug(f"Failed to save raw FMP payload {payload_key} for {ticker}: {se}")
-                return data
-            except requests.exceptions.HTTPError as http_err:
-                status = http_err.response.status_code if http_err.response is not None else 0
-                if status == 429:
-                    # Rate limited — retry with exponential backoff
-                    if attempt < max_retries:
-                        wait = 2 ** attempt * 5  # 5s, 10s, 20s
-                        logger.warning(f"FMP 429 rate limit for {ticker}/{endpoint}, retrying in {wait}s (attempt {attempt+1}/{max_retries})")
-                        time.sleep(wait)
-                        continue
+        for url_idx, try_url in enumerate(urls_to_try):
+            is_fallback = url_idx > 0
+            for attempt in range(max_retries + 1):
+                try:
+                    response = requests.get(try_url)
+                    response.raise_for_status()
+                    data = response.json()
+                    # Save raw payload for fundamentals endpoints
+                    if payload_key and start_date and end_date:
+                        try:
+                            self.data_store._save_raw_payload('FMP', ticker, payload_key, start_date, end_date, data)
+                        except Exception as se:
+                            logger.debug(f"Failed to save raw FMP payload {payload_key} for {ticker}: {se}")
+                    if is_fallback:
+                        logger.info(f"FMP v3 fallback succeeded for {ticker}/{endpoint}")
+                    return data
+                except requests.exceptions.HTTPError as http_err:
+                    status = http_err.response.status_code if http_err.response is not None else 0
+                    if status == 429:
+                        # Rate limited — retry with exponential backoff
+                        if attempt < max_retries:
+                            wait = 2 ** attempt * 5  # 5s, 10s, 20s
+                            logger.warning(f"FMP 429 rate limit for {ticker}/{endpoint}, retrying in {wait}s (attempt {attempt+1}/{max_retries})")
+                            time.sleep(wait)
+                            continue
+                        else:
+                            logger.error(f"FMP 429 rate limit exhausted for {ticker}/{endpoint} after {max_retries} retries")
+                            raise FMPRateLimitError(429, ticker, endpoint)
+                    elif status in (402, 403):
+                        if not is_fallback and len(urls_to_try) > 1:
+                            # /stable/ returned 402/403 — try /api/v3/ fallback
+                            logger.info(f"FMP /stable/ returned {status} for {ticker}/{endpoint} — trying /api/v3/ fallback")
+                            break  # break inner retry loop to try next URL
+                        else:
+                            logger.warning(f"FMP {status} Payment/RateLimit Required for {ticker}/{endpoint} — daily quota likely exhausted")
+                            raise FMPRateLimitError(status, ticker, endpoint)
                     else:
-                        logger.error(f"FMP 429 rate limit exhausted for {ticker}/{endpoint} after {max_retries} retries")
-                        raise FMPRateLimitError(429, ticker, endpoint)
-                elif status == 402:
-                    logger.warning(f"FMP 402 Payment Required for {ticker}/{endpoint} — daily quota likely exhausted")
-                    raise FMPRateLimitError(402, ticker, endpoint)
-                else:
-                    logger.warning(f"Failed to fetch {endpoint} data for {ticker}: {http_err}")
+                        logger.warning(f"Failed to fetch {endpoint} data for {ticker}: {http_err}")
+                        return []
+                except requests.exceptions.RequestException as e:
+                    logger.warning(f"Failed to fetch {endpoint} data for {ticker}: {e}")
                     return []
-            except requests.exceptions.RequestException as e:
-                logger.warning(f"Failed to fetch {endpoint} data for {ticker}: {e}")
+            else:
+                # Inner loop completed without break (all retries exhausted) — don't try next URL
                 return []
+            # If we broke out of inner loop (402 fallback), continue to next URL
+            continue
         return []
 
     def get_sp500_components(self, date: str = None) -> pd.DataFrame:
@@ -1144,54 +1165,77 @@ class FMPFetcher(BaseDataFetcher, DataSource):
 
                     # Try FMP first (skip if we already know it returns 402)
                     if not _fmp_402_detected:
-                        try:
-                            url = f"{self.base_url}/historical-price-eod/full?symbol={ticker}&from={min_date}&to={max_date}&apikey={self.api_key}"
-                            response = requests.get(url)
-                            response.raise_for_status()
+                        fmp_succeeded = False
+                        # URLs to try: /stable/ first, then /api/v3/ fallback
+                        fmp_urls = [
+                            f"{self.base_url}/historical-price-eod/full?symbol={ticker}&from={min_date}&to={max_date}&apikey={self.api_key}",
+                        ]
+                        if '/stable/' in self.base_url:
+                            fmp_urls.append(
+                                f"https://financialmodelingprep.com/api/v3/historical-price-full/{ticker}?from={min_date}&to={max_date}&apikey={self.api_key}"
+                            )
 
-                            data = response.json()
+                        for fmp_url_idx, fmp_url in enumerate(fmp_urls):
+                            try:
+                                response = requests.get(fmp_url)
+                                response.raise_for_status()
 
-                            if isinstance(data, dict) and 'historical' in data:
-                                historical_rows = data.get('historical') or []
-                            elif isinstance(data, list):
-                                historical_rows = data
-                            else:
-                                logger.warning(f"No historical data key in response for {ticker} ({min_date} to {max_date})")
-                                historical_rows = []
+                                data = response.json()
 
-                            if historical_rows:
-                                ticker_data = []
-                                for item in historical_rows:
-                                    record = {
-                                        'gvkey': ticker,
-                                        'datadate': item['date'],
-                                        'tic': ticker,
-                                        'prccd': item['close'],
-                                        'prcod': item['open'],
-                                        'prchd': item['high'],
-                                        'prcld': item['low'],
-                                        'cshtrd': item['volume'],
-                                        'adj_close': item.get('adjClose', item['close'])
-                                    }
-                                    ticker_data.append(record)
-
-                                if ticker_data:
-                                    all_data.extend(ticker_data)
-                                    logger.debug(f"Fetched {len(ticker_data)} records for {ticker} via FMP ({min_date} to {max_date})")
+                                if isinstance(data, dict) and 'historical' in data:
+                                    historical_rows = data.get('historical') or []
+                                elif isinstance(data, list):
+                                    historical_rows = data
                                 else:
-                                    logger.warning(f"No historical data for {ticker} ({min_date} to {max_date})")
-                                continue  # FMP succeeded, skip yfinance fallback
+                                    logger.warning(f"No historical data key in response for {ticker} ({min_date} to {max_date})")
+                                    historical_rows = []
 
-                        except requests.exceptions.HTTPError as http_err:
-                            status = http_err.response.status_code if http_err.response is not None else 0
-                            if status in (402, 403):
-                                if not _fmp_402_detected:
-                                    logger.warning(f"FMP returned {status} for {ticker} — switching to yfinance fallback for all remaining tickers")
-                                    _fmp_402_detected = True
-                            else:
-                                logger.warning(f"FMP HTTP error for {ticker}: {http_err}")
-                        except Exception as fmp_err:
-                            logger.warning(f"FMP error for {ticker}: {fmp_err}")
+                                if historical_rows:
+                                    ticker_data = []
+                                    for item in historical_rows:
+                                        record = {
+                                            'gvkey': ticker,
+                                            'datadate': item['date'],
+                                            'tic': ticker,
+                                            'prccd': item['close'],
+                                            'prcod': item['open'],
+                                            'prchd': item['high'],
+                                            'prcld': item['low'],
+                                            'cshtrd': item['volume'],
+                                            'adj_close': item.get('adjClose', item['close'])
+                                        }
+                                        ticker_data.append(record)
+
+                                    if ticker_data:
+                                        all_data.extend(ticker_data)
+                                        if fmp_url_idx > 0:
+                                            logger.debug(f"Fetched {len(ticker_data)} records for {ticker} via FMP v3 fallback ({min_date} to {max_date})")
+                                        else:
+                                            logger.debug(f"Fetched {len(ticker_data)} records for {ticker} via FMP ({min_date} to {max_date})")
+                                    else:
+                                        logger.warning(f"No historical data for {ticker} ({min_date} to {max_date})")
+                                    fmp_succeeded = True
+                                    break  # FMP succeeded, no need to try next URL
+
+                            except requests.exceptions.HTTPError as http_err:
+                                status = http_err.response.status_code if http_err.response is not None else 0
+                                if status in (402, 403):
+                                    if fmp_url_idx < len(fmp_urls) - 1:
+                                        logger.info(f"FMP /stable/ returned {status} for {ticker} — trying /api/v3/ fallback")
+                                        continue  # try next URL
+                                    else:
+                                        if not _fmp_402_detected:
+                                            logger.warning(f"FMP returned {status} for {ticker} — switching to yfinance fallback for all remaining tickers")
+                                            _fmp_402_detected = True
+                                else:
+                                    logger.warning(f"FMP HTTP error for {ticker}: {http_err}")
+                                    break  # don't try next URL for non-402 errors
+                            except Exception as fmp_err:
+                                logger.warning(f"FMP error for {ticker}: {fmp_err}")
+                                break
+
+                        if fmp_succeeded:
+                            continue  # skip yfinance fallback
 
                     # yfinance fallback
                     try:
