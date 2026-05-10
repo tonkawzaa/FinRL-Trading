@@ -345,6 +345,89 @@ class FMPFetcher(BaseDataFetcher, DataSource):
             continue
         return []
 
+    def _fetch_yf_fundamentals_data(
+        self, ticker: str, start_date: str, end_date: str
+    ):
+        """Fetch quarterly fundamental data from yfinance, returning (income, balance, cashflow)
+        as lists of dicts in FMP-compatible format. Ratios are intentionally omitted
+        (the caller computes them from raw financials).
+        """
+        INCOME_MAP = {
+            'Total Revenue': 'revenue',
+            'Net Income': 'netIncome',
+            'Diluted EPS': 'eps',
+            'Diluted Average Shares': 'weightedAverageShsOutDil',
+            'Basic Average Shares': 'weightedAverageShsOut',
+            'Gross Profit': 'grossProfit',
+            'Operating Income': 'operatingIncome',
+            'EBITDA': 'ebitda',
+            'EBIT': 'ebit',
+            'Pretax Income': 'incomeBeforeTax',
+            'Tax Provision': 'incomeTaxExpense',
+            'Cost Of Revenue': 'costOfRevenue',
+            'Research And Development': 'researchAndDevelopmentExpenses',
+            'Selling General And Administration': 'sellingGeneralAndAdministrativeExpenses',
+        }
+        BALANCE_MAP = {
+            'Common Stock Equity': 'totalStockholdersEquity',
+            'Stockholders Equity': 'totalStockholdersEquity',
+            'Total Assets': 'totalAssets',
+            'Total Debt': 'totalDebt',
+            'Long Term Debt': 'longTermDebt',
+            'Current Assets': 'totalCurrentAssets',
+            'Current Liabilities': 'totalCurrentLiabilities',
+            'Ordinary Shares Number': 'commonStockSharesOutstanding',
+            'Inventory': 'inventory',
+            'Cash Cash Equivalents And Short Term Investments': 'cashAndShortTermInvestments',
+            'Cash And Cash Equivalents': 'cashAndCashEquivalents',
+            'Total Liabilities Net Minority Interest': 'totalLiabilities',
+            'Accounts Receivable': 'accountsReceivables',
+            'Accounts Payable': 'accountPayables',
+            'Net PPE': 'propertyPlantEquipmentNet',
+            'Goodwill And Other Intangible Assets': 'goodwillAndIntangibleAssets',
+        }
+        CASHFLOW_MAP = {
+            'Free Cash Flow': 'freeCashFlow',
+            'Capital Expenditure': 'capitalExpenditure',
+            'Cash Dividends Paid': 'dividendsPaid',
+            'Common Stock Dividend Paid': 'commonDividendsPaid',
+            'Operating Cash Flow': 'operatingCashFlow',
+            'Cash Flow From Continuing Operating Activities': 'operatingCashFlow',
+            'Depreciation And Amortization': 'depreciationAndAmortization',
+            'Stock Based Compensation': 'stockBasedCompensation',
+        }
+
+        start_dt = pd.to_datetime(start_date) - pd.DateOffset(months=4)
+        end_dt = pd.to_datetime(end_date) + pd.DateOffset(months=3)
+
+        yf_t = yf.Ticker(ticker)
+
+        def _stmt_to_records(stmt_df, field_map):
+            records = []
+            if stmt_df is None or stmt_df.empty:
+                return records
+            for col in stmt_df.columns:
+                ts = pd.to_datetime(col, errors='coerce')
+                if pd.isna(ts) or ts < start_dt or ts > end_dt:
+                    continue
+                record = {'date': ts.strftime('%Y-%m-%d')}
+                for yf_field, fmp_field in field_map.items():
+                    if yf_field not in stmt_df.index:
+                        continue
+                    val = stmt_df.loc[yf_field, col]
+                    record[fmp_field] = float(val) if (val is not None and pd.notna(val)) else None
+                records.append(record)
+            return records
+
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            income_data = _stmt_to_records(yf_t.quarterly_income_stmt, INCOME_MAP)
+            balance_data = _stmt_to_records(yf_t.quarterly_balance_sheet, BALANCE_MAP)
+            cashflow_data = _stmt_to_records(yf_t.quarterly_cashflow, CASHFLOW_MAP)
+
+        return income_data, balance_data, cashflow_data
+
     def get_sp500_components(self, date: str = None) -> pd.DataFrame:
         """Get S&P 500 components from FMP."""
         if date is None:
@@ -601,9 +684,16 @@ class FMPFetcher(BaseDataFetcher, DataSource):
         return result
 
     def get_fundamental_data(self, tickers: pd.DataFrame, start_date: str, end_date: str, align_quarter_dates: bool = False) -> pd.DataFrame:
-        """Get fundamental data from FMP with extended fields and forward y_return and incremental updates.
-        Adds one next quarter to compute the last forward return, then drops that extra row, and drops rows with missing y_return.
-        If align_quarter_dates is True, align each quarter to Mar/Jun/Sep/Dec 1st and compute prices and y_return based on these aligned dates."""
+        """Get fundamental data using yfinance (primary) with FMP as fallback.
+
+        yfinance is tried first for every ticker — it is free, requires no API key,
+        and has no daily call limit. FMP is used only when yfinance returns no data.
+        Ratios (P/E, P/B, etc.) are always computed from the raw financial statements
+        rather than pulled from an endpoint, so results are consistent across sources.
+
+        If align_quarter_dates is True, align each quarter to Mar/Jun/Sep/Dec 1st and
+        compute prices and y_return based on these aligned dates.
+        """
 
         # # Step 1: Check database for existing data
         # existing_data = self.data_store.get_fundamental_data(tickers, start_date, end_date)
@@ -648,14 +738,47 @@ class FMPFetcher(BaseDataFetcher, DataSource):
 
         for ticker in tickers_to_fetch if tickers_to_fetch else []:
             try:
-                # Local-first: helper will use DB in offline mode
-                income_data = self._fetch_fmp_data(ticker, 'income-statement', 'quarter', start_date, end_date)
-                balance_data = self._fetch_fmp_data(ticker, 'balance-sheet-statement', 'quarter', start_date, end_date)
-                cashflow_data = self._fetch_fmp_data(ticker, 'cash-flow-statement', 'quarter', start_date, end_date)
+                # Try yfinance first (free, no API key, no daily rate limit).
+                # yfinance typically only carries the last ~4-8 quarters; if the
+                # requested range includes older history the FMP fallback is used.
+                income_data, balance_data, cashflow_data = [], [], []
+                ratios_data = []
 
-                # ratios
-                # Ratios via helper
-                ratios_data = self._fetch_fmp_data(ticker, 'ratios', 'quarter', start_date, end_date) or []
+                def _records_in_range(records: list) -> bool:
+                    """True if any record's date falls within [start_date, end_date]."""
+                    for r in records:
+                        d = pd.to_datetime(r.get('date'), errors='coerce')
+                        if pd.notna(d) and start_dt <= d <= end_dt:
+                            return True
+                    return False
+
+                _yf_ok = False
+                try:
+                    income_data, balance_data, cashflow_data = self._fetch_yf_fundamentals_data(
+                        ticker, start_date, end_date
+                    )
+                    # Only treat yfinance as successful when it actually covers the
+                    # requested date window (it may return empty for old history).
+                    _yf_ok = (
+                        _records_in_range(income_data)
+                        or _records_in_range(balance_data)
+                        or _records_in_range(cashflow_data)
+                    )
+                    if _yf_ok:
+                        logger.debug(f"yfinance fundamentals fetched for {ticker}: "
+                                     f"{len(income_data)}i/{len(balance_data)}b/{len(cashflow_data)}c quarters")
+                    else:
+                        logger.debug(f"yfinance has no data in range for {ticker}, falling back to FMP")
+                except Exception as yf_err:
+                    logger.debug(f"yfinance fundamentals unavailable for {ticker}: {yf_err}")
+
+                if not _yf_ok:
+                    # FMP fallback: local DB cache is checked first by _fetch_fmp_data,
+                    # so this only makes network calls for truly missing quarters.
+                    income_data = self._fetch_fmp_data(ticker, 'income-statement', 'quarter', start_date, end_date)
+                    balance_data = self._fetch_fmp_data(ticker, 'balance-sheet-statement', 'quarter', start_date, end_date)
+                    cashflow_data = self._fetch_fmp_data(ticker, 'cash-flow-statement', 'quarter', start_date, end_date)
+                    ratios_data = self._fetch_fmp_data(ticker, 'ratios', 'quarter', start_date, end_date) or []
 
                 # profile for sector
                 # Profile via helper
