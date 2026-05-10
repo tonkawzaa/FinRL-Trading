@@ -1,21 +1,21 @@
-# 权重分配方法使用指南
+# Weight Allocation Guide
 
-## 概述
+## Overview
 
-ML策略模块现在支持多种权重分配方法，用于为选中的股票分配投资组合权重。
+The ML strategy module now supports multiple weight allocation methods for assigning portfolio weights to selected stocks.
 
-## 支持的权重分配方法
+## Supported Weight Allocation Methods
 
-### 1. 等权重 (Equal Weight) - 默认方法
+### 1. Equal Weight - Default Method
 
-为所有选中的股票分配相等的权重。
+Assigns equal weight to all selected stocks.
 
-**优点：**
-- 简单易懂
-- 不需要额外的市场数据
-- 计算速度快
+**Pros:**
+- Simple and easy to understand
+- No additional market data required
+- Fast computation speed
 
-**使用方法：**
+**Usage:**
 ```python
 result = strategy.generate_weights(
     data_dict,
@@ -24,75 +24,75 @@ result = strategy.generate_weights(
 )
 ```
 
-### 2. 最小方差 (Min Variance)
+### 2. Min Variance
 
-使用历史收益率数据构建最小方差投资组合，目标是最小化组合的波动性。
+Constructs a minimum variance portfolio using historical return data, aiming to minimize the portfolio's volatility.
 
-**优点：**
-- 考虑股票间的相关性
-- 降低组合整体风险
-- 更优的风险调整收益
-- **自动使用基本面数据中的季度价格（adj_close_q），无需额外提供价格数据**
+**Pros:**
+- Considers correlations between stocks
+- Reduces overall portfolio risk
+- Better risk-adjusted returns
+- **Automatically uses quarterly prices (`adj_close_q`) from fundamental data, no need to provide additional price data**
 
-**缺点：**
-- 计算时间较长
-- 对数据质量要求高
+**Cons:**
+- Longer computation time
+- High requirements for data quality
 
-**使用方法：**
+**Usage:**
 ```python
-# 方法1：直接使用基本面数据中的 adj_close_q（推荐）
+# Method 1: Directly use adj_close_q from fundamental data (Recommended)
 data_dict = {
-    'fundamentals': fundamentals_df  # 必须包含 adj_close_q 列
+    'fundamentals': fundamentals_df  # Must contain adj_close_q column
 }
 
 result = strategy.generate_weights(
     data_dict,
     prediction_mode='single',
     weight_method='min_variance',
-    lookback_periods=8  # 用于计算协方差矩阵的回溯季度数（默认8，即2年）
+    lookback_periods=8  # Number of lookback quarters for covariance matrix calculation (default 8, i.e., 2 years)
 )
 
-# 方法2：使用日度价格数据（可选，如果需要更精细的协方差估计）
+# Method 2: Use daily price data (Optional, if finer covariance estimation is needed)
 data_dict = {
     'fundamentals': fundamentals_df,
-    'prices': prices_df  # 包含 ['date', 'tic', 'close']
+    'prices': prices_df  # Contains ['date', 'tic', 'close']
 }
 
 result = strategy.generate_weights(
     data_dict,
     prediction_mode='single',
     weight_method='min_variance',
-    lookback_periods=252  # 用于计算协方差矩阵的回溯天数
+    lookback_periods=252  # Number of lookback days for covariance matrix calculation
 )
 ```
 
-## 价格数据格式要求
+## Price Data Format Requirements
 
-使用 `min_variance` 方法时支持两种数据格式：
+When using the `min_variance` method, two data formats are supported:
 
-### 格式1：基本面数据（推荐，自动使用）
-如果基本面数据包含以下列，系统会自动使用：
-- `datadate`: 季度日期
-- `gvkey` 或 `tic`: 股票标识符
-- `adj_close_q`: 季度调整收盘价
+### Format 1: Fundamental Data (Recommended, used automatically)
+If the fundamental data contains the following columns, the system will use them automatically:
+- `datadate`: Quarter date
+- `gvkey` or `tic`: Stock identifier
+- `adj_close_q`: Quarterly adjusted close price
 
-示例：
+Example:
 ```python
 fundamentals_df = pd.DataFrame({
     'datadate': ['2024-01-31', '2024-04-30', ...],
     'gvkey': ['001055', '001055', ...],
     'adj_close_q': [72.56, 75.06, ...],
-    # ... 其他基本面指标
+    # ... other fundamental indicators
 })
 ```
 
-### 格式2：日度价格数据（可选）
-如果需要使用日度数据进行更精细的协方差估计：
-- `date`: 日期
-- `tic` 或 `gvkey`: 股票标识符
-- `close` 或 `adj_close`: 收盘价
+### Format 2: Daily Price Data (Optional)
+If daily data is needed for a more precise covariance estimation:
+- `date`: Date
+- `tic` or `gvkey`: Stock identifier
+- `close` or `adj_close`: Close price
 
-示例：
+Example:
 ```python
 prices_df = pd.DataFrame({
     'date': ['2024-01-01', '2024-01-02', ...],
@@ -101,9 +101,9 @@ prices_df = pd.DataFrame({
 })
 ```
 
-## 完整示例
+## Complete Examples
 
-### 示例1：单次预测 + 等权重
+### Example 1: Single Prediction + Equal Weight
 ```python
 from src.strategies.ml_strategy import MLStockSelectionStrategy
 from src.strategies.base_strategy import StrategyConfig
@@ -116,7 +116,7 @@ config = StrategyConfig(
 strategy = MLStockSelectionStrategy(config)
 
 data_dict = {
-    'fundamentals': fundamentals_df  # 包含 y_return 列
+    'fundamentals': fundamentals_df  # Contains y_return column
 }
 
 result = strategy.generate_weights(
@@ -130,11 +130,11 @@ result = strategy.generate_weights(
 print(result.weights)
 ```
 
-### 示例2：滚动预测 + 最小方差（使用基本面数据）
+### Example 2: Rolling Prediction + Min Variance (Using Fundamental Data)
 ```python
-# 只需要基本面数据，会自动使用 adj_close_q 列
+# Only fundamental data is needed, adj_close_q column will be used automatically
 data_dict = {
-    'fundamentals': fundamentals_df  # 包含 adj_close_q 列
+    'fundamentals': fundamentals_df  # Contains adj_close_q column
 }
 
 result = strategy.generate_weights(
@@ -143,13 +143,13 @@ result = strategy.generate_weights(
     top_quantile=0.75,
     prediction_mode='rolling',
     weight_method='min_variance',
-    lookback_periods=8  # 回溯8个季度
+    lookback_periods=8  # Look back 8 quarters
 )
 
 print(result.weights)
 ```
 
-### 示例3：行业中立策略 + 最小方差（使用基本面数据）
+### Example 3: Sector Neutral Strategy + Min Variance (Using Fundamental Data)
 ```python
 from src.strategies.ml_strategy import SectorNeutralMLStrategy
 
@@ -160,9 +160,9 @@ sector_config = StrategyConfig(
 
 sector_strategy = SectorNeutralMLStrategy(sector_config)
 
-# 只需要基本面数据，会自动使用 adj_close_q 列
+# Only fundamental data is needed, adj_close_q column will be used automatically
 data_dict = {
-    'fundamentals': fundamentals_df  # 包含 sector/gsector 和 adj_close_q 列
+    'fundamentals': fundamentals_df  # Contains sector/gsector and adj_close_q columns
 }
 
 result = sector_strategy.generate_weights(
@@ -171,65 +171,64 @@ result = sector_strategy.generate_weights(
     top_quantile=0.75,
     prediction_mode='rolling',
     weight_method='min_variance',
-    lookback_periods=8  # 回溯8个季度
+    lookback_periods=8  # Look back 8 quarters
 )
 
 print(result.weights)
 ```
 
-## 参数说明
+## Parameter Descriptions
 
-### 通用参数
-- `prediction_mode`: 预测模式
-  - `'single'`: 单次预测（使用最后一个日期）
-  - `'rolling'`: 滚动预测（所有可用日期）
+### Common Parameters
+- `prediction_mode`: Prediction mode
+  - `'single'`: Single prediction (uses the last date)
+  - `'rolling'`: Rolling prediction (all available dates)
   
-- `weight_method`: 权重分配方法
-  - `'equal'`: 等权重（默认）
-  - `'min_variance'`: 最小方差
+- `weight_method`: Weight allocation method
+  - `'equal'`: Equal weight (default)
+  - `'min_variance'`: Minimum variance
   
-- `test_quarters`: 验证窗口季度数（默认4）
-- `train_quarters`: 训练窗口季度数（默认16，仅用于rolling模式）
-- `top_quantile`: 选股分位数阈值（默认0.75，即选择预测收益率前25%的股票）
+- `test_quarters`: Validation window in quarters (default 4)
+- `train_quarters`: Training window in quarters (default 16, used only in rolling mode)
+- `top_quantile`: Stock selection quantile threshold (default 0.75, meaning selecting the top 25% stocks based on predicted returns)
 
-### 最小方差方法专用参数
-- `lookback_periods`: 计算协方差矩阵的回溯期数
-  - 使用基本面数据（adj_close_q）时：默认8（8个季度，约2年）
-  - 使用日度价格数据时：默认252（252个交易日，约1年）
+### Min Variance Method Specific Parameters
+- `lookback_periods`: Number of periods to look back for calculating the covariance matrix
+  - When using fundamental data (`adj_close_q`): default is 8 (8 quarters, about 2 years)
+  - When using daily price data: default is 252 (252 trading days, about 1 year)
 
-## 注意事项
+## Notes
 
-1. **数据自动识别**：
-   - 系统会自动检测基本面数据中的 `adj_close_q` 列并优先使用
-   - 如果基本面数据中没有价格信息，会尝试使用额外提供的 `prices` 数据
-   - 无需手动选择数据源
+1. **Automatic Data Recognition**:
+   - The system automatically detects and prioritizes the `adj_close_q` column in fundamental data.
+   - If there is no price information in the fundamental data, it attempts to use additionally provided `prices` data.
+   - No manual selection of the data source is necessary.
 
-2. **数据要求**：
-   - 使用季度数据（adj_close_q）时，至少需要3个季度
-   - 使用日度数据时，至少需要3个交易日
-   - 推荐使用至少8个季度或252个交易日以获得稳定的协方差估计
+2. **Data Requirements**:
+   - When using quarterly data (`adj_close_q`), at least 3 quarters are required.
+   - When using daily data, at least 3 trading days are required.
+   - It is recommended to use at least 8 quarters or 252 trading days to obtain a stable covariance estimate.
 
-3. **计算性能**：最小方差方法需要优化求解，计算时间较等权重方法长
+3. **Computational Performance**: The min variance method requires optimization solving, which takes longer than the equal weight method.
 
-4. **数据质量**：最小方差方法对数据质量敏感，缺失值会导致部分股票被排除
+4. **Data Quality**: The min variance method is sensitive to data quality; missing values will result in some stocks being excluded.
 
-5. **自动降级**：如果价格数据不足或优化失败，系统会自动降级为等权重方法并记录警告
+5. **Automatic Fallback**: If the price data is insufficient or optimization fails, the system automatically falls back to the equal weight method and logs a warning.
 
-6. **风控限制**：所有权重分配方法都会应用策略配置中的风控限制（如单只股票最大权重）
+6. **Risk Control Limits**: All weight allocation methods will apply the risk control limits set in the strategy configuration (e.g., maximum weight per stock).
 
-## 扩展
+## Extensions
 
-如果需要添加新的权重分配方法，可以在 `MLStockSelectionStrategy` 类中扩展 `allocate_weights` 方法：
+If you need to add a new weight allocation method, you can extend the `allocate_weights` method in the `MLStockSelectionStrategy` class:
 
 ```python
 def allocate_weights(self, selected_stocks, method='equal', **kwargs):
     if method == 'your_new_method':
-        # 实现你的权重分配逻辑
+        # Implement your weight allocation logic
         weights_df = self._compute_your_method_weights(selected_stocks, **kwargs)
     elif method == 'equal':
         weights_df = self._compute_equal_weights(selected_stocks['gvkey'].tolist())
-    # ... 其他方法
+    # ... other methods
     
     return result
 ```
-
